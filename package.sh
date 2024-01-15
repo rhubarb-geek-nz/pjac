@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 #
-# $Id: package.sh 9 2021-01-11 21:07:00Z rhubarb-geek-nz $
+# $Id: package.sh 11 2021-01-12 04:51:55Z rhubarb-geek-nz $
 #
 
 VERSION=3.0.1
@@ -25,8 +25,6 @@ VERSION=3.0.1
 PKGNAME=pjac
 APPNAME=acme_client
 GITREPO=$APPNAME
-
-rm -rf data "$GITREPO"
 
 cleanup()
 {
@@ -38,6 +36,8 @@ first()
 	echo "$1"
 }
 
+cleanup
+
 trap cleanup 0
 
 git clone https://github.com/porunov/$GITREPO.git "$GITREPO"
@@ -47,7 +47,32 @@ git clone https://github.com/porunov/$GITREPO.git "$GITREPO"
 
 	cd "$GITREPO"
 	git checkout "v$VERSION"
+	patch <<EOF
+--- build.gradle	2021-01-12 04:23:36.686543958 +0000
++++ ../build.gradle.v2	2021-01-12 04:20:39.299385039 +0000
+@@ -13,14 +13,13 @@
+ 
+ jar {
+     baseName = 'acme_client'
+-    manifest {
+-        attributes "Main-Class": "\$mainClassName"
+-    }
+ 
+     doFirst {
+-        from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
++        manifest {
++	        attributes("Main-Class": "\$mainClassName",
++                "Class-Path": configurations.compile.collect { it.getName() }.join(' '))
++    	}
+     }
+-    exclude 'META-INF/*.RSA', 'META-INF/*.SF','META-INF/*.DSA'
+ }
+ 
+ repositories {
+EOF
 	./gradlew clean build	
+	cd build/distributions
+	unzip acme_client.zip
 )
 
 for d in lib bin
@@ -68,9 +93,13 @@ EOF
 
 chmod +x data/opt/$PKGNAME/bin/$APPNAME
 
-mv "$GITREPO/build/libs/$APPNAME.jar" data/opt/$PKGNAME/lib
+cp $GITREPO/build/distributions/acme_client/lib/*.jar data/opt/$PKGNAME/lib
 
-find data
+(
+	set -e
+	cd data
+	find * | xargs ls -ld
+)
 
 SIZE=`du -sk data`
 SIZE=`first $SIZE`
