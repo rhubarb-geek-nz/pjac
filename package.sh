@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 #
-# $Id: package.sh 11 2021-01-12 04:51:55Z rhubarb-geek-nz $
+# $Id: package.sh 154 2022-01-16 19:44:10Z rhubarb-geek-nz $
 #
 
 VERSION=3.0.1
@@ -25,10 +25,11 @@ VERSION=3.0.1
 PKGNAME=pjac
 APPNAME=acme_client
 GITREPO=$APPNAME
+RELEASE=$( svn log -q "$0" | grep -v "^------" | wc -l)
 
 cleanup()
 {
-	rm -rf tmp data control data.tar.gz control.tar.gz "$GITREPO" debian-binary
+	rm -rf tmp data control data.tar.gz control.tar.gz "$GITREPO" debian-binary rpm.spec rpm.dir
 }
 
 first()
@@ -37,6 +38,8 @@ first()
 }
 
 cleanup
+
+rm -f *.deb *.rpm
 
 trap cleanup 0
 
@@ -72,7 +75,12 @@ git clone https://github.com/porunov/$GITREPO.git "$GITREPO"
 EOF
 	./gradlew clean build	
 	cd build/distributions
-	unzip acme_client.zip
+	if test -n "$JAVA_HOME"
+	then
+		"$JAVA_HOME/bin/jar" xf acme_client.zip
+	else
+		jar xf acme_client.zip
+	fi
 )
 
 for d in lib bin
@@ -88,18 +96,12 @@ then
 else
         JAVA=java
 fi
-exec "\$JAVA" -jar /opt/$PKGNAME/lib/$APPNAME.jar \$@
+exec "\$JAVA" -jar /opt/$PKGNAME/lib/$APPNAME.jar "\$@"
 EOF
 
 chmod +x data/opt/$PKGNAME/bin/$APPNAME
 
 cp $GITREPO/build/distributions/acme_client/lib/*.jar data/opt/$PKGNAME/lib
-
-(
-	set -e
-	cd data
-	find * | xargs ls -ld
-)
 
 SIZE=`du -sk data`
 SIZE=`first $SIZE`
@@ -111,7 +113,6 @@ Package: $PKGNAME
 Version: $VERSION
 Architecture: all
 Maintainer: rhubarb-geek-nz@users.sourceforge.net
-Recommends:
 Section: misc
 Priority: extra
 Homepage: https://github.com/porunov/acme_client
@@ -145,3 +146,71 @@ do
 done
 
 ar r "$PKGNAME"_"$VERSION"_all.deb debian-binary control.tar.gz data.tar.gz
+
+RPMBUILD=rpm
+
+if rpmbuild --help >/dev/null
+then
+    RPMBUILD=rpmbuild
+fi
+
+if $RPMBUILD --version
+then
+	(
+		cat << EOF
+Summary: Porunov Java ACME Client
+Name: $PKGNAME
+Version: $VERSION
+BuildArch: noarch
+Release: $RELEASE
+Group: Applications/System
+License: MIT
+Prefix: /
+
+%description
+Porunov Java ACME Client (PJAC) is a Java CLI management agent designed for manual certificate management utilizing the Automatic Certificate Management Environment (ACME) protocol.
+
+EOF
+
+		echo "%files"
+		echo "%defattr(-,root,root)"
+		cd data
+
+		find opt/* | while read N
+		do
+			if test -d "$N"
+			then
+				echo "%dir %attr(555,root,root) /$N"
+			else
+				if test -L "$N"
+				then
+					echo "/$N"
+				else
+					if test -f "$N"
+					then
+						if test -x "$N"
+						then
+							echo "%attr(555,root,root) /$N"
+						else
+							echo "%attr(444,root,root) /$N"	
+						fi
+					fi
+				fi
+			fi
+		done
+
+		echo
+		echo "%clean"
+		echo echo clean "$\@"
+		echo
+	) >rpm.spec
+
+	mkdir rpm.dir
+
+	"$RPMBUILD" --buildroot "$(pwd)/data" --define "_build_id_links none" --define "_rpmdir $(pwd)/rpm.dir" -bb "$(pwd)/rpm.spec"
+
+	find rpm.dir -type f -name "*.rpm" | while read N
+	do
+		mv "$N" .
+	done
+fi
